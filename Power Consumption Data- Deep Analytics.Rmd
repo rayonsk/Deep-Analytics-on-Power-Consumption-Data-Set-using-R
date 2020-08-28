@@ -1,0 +1,289 @@
+---
+title: "Deep Analytics on Power Consumption Data Set"
+author: "Rayon Susan Koshy"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#install.packages("RMySQL")
+#install.packages("lubridate")
+library(RMySQL)
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(readr)
+#library(ggplot2)
+library(ggcorrplot)
+library(lubridate)
+library(ggpubr)
+library(hexbin)
+require(scales)
+
+##Create data base connection
+con = dbConnect(MySQL(), user ='deepAnalytics',
+                password ='Sqltask1234!',
+                dbname= 'dataanalytics2018',
+                host = 'data-analytics-2018.cbrosir2cswx.us-east-1.rds.amazonaws.com')
+
+dbListTables(con)
+
+dbListFields(con,'yr_2006')
+
+yr_2006 <- dbGetQuery(con," SELECT 
+                      Date,Time,Global_active_power,
+                      Sub_metering_1,Sub_metering_2,
+                      Sub_metering_3 
+                      from yr_2006")
+yr_2007 <- dbGetQuery(con," SELECT 
+                      Date,Time,Global_active_power,
+                      Sub_metering_1,Sub_metering_2,
+                      Sub_metering_3 
+                      from yr_2007")
+yr_2008 <- dbGetQuery(con," SELECT 
+                      Date,Time,Global_active_power,
+                      Sub_metering_1,Sub_metering_2,
+                      Sub_metering_3 
+                      from yr_2008")
+yr_2009 <- dbGetQuery(con," SELECT 
+                      Date,Time,Global_active_power,
+                      Sub_metering_1,Sub_metering_2,
+                      Sub_metering_3 
+                      from yr_2009")
+yr_2010 <- dbGetQuery(con," SELECT 
+                      Date,Time,Global_active_power,
+                      Sub_metering_1,Sub_metering_2,
+                      Sub_metering_3 
+                      from yr_2010")
+
+
+#combining the rows together
+newDf <- bind_rows(yr_2007,yr_2008,
+                   yr_2009,yr_2010)
+```
+
+
+In this project we are doing domain research and exploratory data analysis ona electric power consumption data. The electric power consumption data set that we used in the project can be downloaded from the UC Irvine Machine Learning Repository:
+
+<http://archive.ics.uci.edu/ml/datasets/Individual+household+electric+power+consumption>
+
+We can use RMySQL package to connect to the database. Here we have combined the data set to a single data frame named as "newDf"
+
+## Understanding the Data Set
+
+```{r cars}
+str(newDf)
+summary(newDf)
+
+head(newDf)
+
+```
+
+Let us perform some data wrangling, which sometimes referred as data munching on our data set.
+
+Since the Date and Time columns are separate they will need to be combined within the dataset in order to convert them to the correct format to complete the appropriate analysis
+```{r}
+#Combine Date and Time attribute values 
+#in a new attribute column
+newDf <- cbind(newDf,paste(newDf$Date,newDf$Time),
+               stringsAsFactors =  FALSE)
+ncol(newDf)
+colnames(newDf)[7] <- "DateTime"
+```
+
+After creating the new attribute lets us convert it to a DateTime data type called POSIXct. After converting to POSIXct we will add the time zone to prevent warning messages. The data description suggests that the data is from France.
+
+```{r ,, warning=FALSE}
+
+#*You will now want to convert the new DateTime 
+#*attribute to a DateTime data type called POSIXct.
+#*After converting to POSIXct we will add the 
+#*time zone to prevent warning messages. 
+
+newDf$DateTime <- as.POSIXct(newDf$DateTime,
+                             "%Y/%m/%d %H:%M:%S")
+attr(newDf$DateTime,"tzone") <- "Europe/Paris"
+```
+
+Now it is time to take a look at our data set to see all the attributes.
+
+```{r }
+str(newDf)
+```
+
+Lubridate is one of the package makes working with DateTime much easier.One of the package's capabilities is extracting DateTime information into individual attributes like Year and Month. These attributes can be used by dplyr's filter command to subset the data into useful data sets for visualization. 
+
+```{r }
+#adding new column year, season
+newDf$Year <- year(newDf$DateTime)
+newDf$Month <- month(newDf$DateTime)
+newDf$Hour <- hour(newDf$DateTime)
+newDf$JustDate <- mday(newDf$DateTime)
+
+```
+
+In addition to the extraction of the attributes let us create a new attribute Season, which corresponds to each season of the year and Day which corresponds to the time of day like Morning,Afternoon,Evening & Night. 
+
+
+```{r , echo=FALSE}
+# to get the season 
+newDf$Season <- 100*month(newDf$DateTime)+day(newDf$DateTime)
+## input Seasons upper limits in the form MMDD in the "break =" option:
+newDf$Season <- base::cut(newDf$Season, breaks = c(0,319,0620,0921,1220,1231)) 
+# rename the resulting groups (could've been done within cut(...levels=) if "Winter" wasn't double
+levels(newDf$Season) <- c("Winter","Spring","Summer","Fall","Winter")
+```
+
+
+
+```{r , echo=FALSE}
+#adding time of the day
+newDf$Day <- hour(newDf$DateTime)
+breaks_Level <- hour(hm("00:00","6:00","12:00",
+                  "18:00","23:00"))
+#lables_name <- c("Night","Morning","Afternoon", "Evening")
+
+newDf$Day <- cut(x =  hour(newDf$DateTime),
+                 breaks = breaks_Level,
+                 include.lowest=TRUE)
+#check on labels
+
+levels(newDf$Day) <- c("Night","Morning",
+                       "Afternoon", "Evening")
+tail(newDf)
+str(newDf)
+```
+
+### Exploratory Data Analysis
+
+The below gives you total power consumed by of the Sub-meters from the year 2007 to 2010
+
+```{r }
+#year
+plot1 <- ggplot(data = newDf,
+       aes(x=Year,y=Sub_metering_1))+
+  geom_bar(stat = "identity",fill = "steelblue")+
+  scale_y_continuous(labels = comma)
+plot2 <- ggplot(data = newDf,
+                aes(x=Year,y=Sub_metering_2))+
+  geom_bar(stat = "identity", fill = "steelblue")+
+  scale_y_continuous(labels = comma)
+plot3 <- ggplot(data = newDf,
+                aes(x=Year,y=Sub_metering_3))+
+  geom_bar(stat = "identity", fill = "steelblue")+
+  scale_y_continuous(labels = comma)
+
+ggarrange(plot1,plot2,plot3,
+          ncol = 1, nrow = 3)
+```
+
+From the above we can come to the below points:
+  - Energy usage by the Sub_metering_3 appliances are comparatively high while it is low for         Sub_metering_1 appliances
+  - For both Sub_metering_1 & Sub_metering_2, 2007 has the highest consumption while it is less for 2010. 
+  - There is gradual reduction energy consumption for both Sub_metering_1 & Sub_metering_2
+  - In case Sub_metering_3, high energy usage is during the year 2009
+
+Let us try plotting the power usage of each submeters during each season & see how much power is consumed by each time of the day. To do so, first us try using geom_hex.
+
+```{r }
+#Season
+plot1 <- ggplot(data = newDf)+
+  geom_hex(mapping = aes(x=Season,y=Sub_metering_1,fill = Day))
+plot2 <- ggplot(data = newDf)+
+  geom_hex(mapping = aes(x=Season,y=Sub_metering_2,fill = Day))
+plot3 <- ggplot(data = newDf)+
+  geom_hex(mapping = aes(x=Season,y=Sub_metering_3,fill = Day))
+
+ggarrange(plot1,plot2,plot3,
+          ncol = 1, nrow = 3)
+```
+
+Geom_hex divides the plot plane into regular hexagons and counts the number of cases in each hexagon.Count gives us number of points in bin. The below shows you the plot for each submeter's usage during each time of the day. 
+
+```{r }
+#Time of the day
+plot1 <- ggplot(data = newDf,
+                aes(x=Day,y=Sub_metering_1))+
+  geom_hex()
+plot2 <- ggplot(data = newDf,
+                aes(x=Day,y=Sub_metering_2))+
+  geom_hex()
+plot3 <- ggplot(data = newDf,
+                aes(x=Day,y=Sub_metering_3))+
+  geom_hex()
+
+ggarrange(plot1,plot2,plot3,
+          ncol = 1, nrow = 3)
+```
+
+The graph below shows Sub-meter1,2 & 3 usage during each season from the year 2007 to 2010. The graph also tells us which time of the day consumes more comparatively. 
+
+```{r }
+plot1 <- ggplot(data = newDf,
+                aes(x=Season, y = Sub_metering_1,
+                    fill= Day))+
+  geom_bar(stat = "identity")+
+  facet_grid(rows = vars(Year))
+plot1
+ 
+plot2 <- ggplot(data = newDf,
+                aes(x=Season, y = Sub_metering_2,
+                    fill= Day))+
+  geom_bar(stat = "identity")+
+  facet_grid(rows = vars(Year))
+plot2  
+
+plot3 <- ggplot(data = newDf,
+                aes(x=Season, y = Sub_metering_3,
+                    fill= Day))+
+  geom_bar(stat = "identity")+
+  facet_grid(rows = vars(Year))
+plot3
+```
+
+Let us take a look into the active voltage usage by using Geom_line. Geom_line gives a line graph which pictures the pattern of "Global_active_power" usage from the year 2007 to 2010
+
+```{r }
+
+###### time series of active voltage 
+
+
+plot1 <- ggplot(data = filter(newDf, Year == 2007), aes(x=JustDate, y = Global_active_power))+
+  geom_line()+
+  xlab("Date")+
+  theme(axis.text.x = element_text(angle = 60, hjust=1))+
+  facet_grid(rows = vars(Month))+
+  ggtitle("Active voltage in the year 2007")
+plot1
+plot2 <- ggplot(data = filter(newDf, Year == 2008), aes(x=JustDate, y = Global_active_power))+
+  geom_line(aes(color = "#000066"))+
+  geom_point(aes(color = "darkmagenta"))+
+  xlab("Date")+
+  theme(axis.text.x = element_text(angle = 60, hjust=1))+
+  facet_grid(rows = vars(Month))+
+  ggtitle("Active voltage in the year 2008")
+plot2
+plot3 <- ggplot(data = filter(newDf, Year == 2009), aes(x=JustDate, y = Global_active_power))+
+  geom_line()+
+  xlab("Date")+
+  theme(axis.text.x = element_text(angle = 60, hjust=1))+
+  facet_grid(rows = vars(Month))+
+  ggtitle("Active voltage in the year 2009")
+plot3
+plot4 <- ggplot(data = filter(newDf, Year == 2010), aes(x=JustDate, y = Global_active_power))+
+  geom_line()+
+  xlab("Date")+
+  theme(axis.text.x = element_text(angle = 60, hjust=1))+
+  facet_grid(rows = vars(Month))+
+  ggtitle("Active voltage in the year 2010")
+plot4
+  
+##BOXPLOT
+boxplot(newDf$Global_active_power)
+```
+
+
+
+```{r , echo=FALSE}
+
+```
